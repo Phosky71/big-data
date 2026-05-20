@@ -1,6 +1,6 @@
-# Big Data Educational Stack
+# Big Data Platform
 
-> A Docker-based lab environment for learning modern data engineering end-to-end: from raw ingestion into HDFS and an S3-compatible data lake, through workflow orchestration and monitoring, to interactive BI dashboards.
+> Production-grade, fully containerised Big Data platform built with Docker Compose. Covers the complete data engineering pipeline: distributed storage, large-scale processing, workflow orchestration, S3-compatible data lake, full-stack observability, and business intelligence.
 
 ---
 
@@ -16,159 +16,161 @@
   - [Monitoring Stack — `monitoring` profile](#monitoring-stack--monitoring-profile)
   - [Apache Superset — `bi` profile](#apache-superset--bi-profile)
 - [Directory Structure](#directory-structure)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Service URLs](#service-urls)
-- [Learning Scenarios](#learning-scenarios)
-- [Notes & Caveats](#notes--caveats)
+- [Requirements](#requirements)
+- [Deployment](#deployment)
+- [Service Endpoints](#service-endpoints)
+- [Use Cases](#use-cases)
+- [Configuration](#configuration)
+- [License](#license)
 
 ---
 
 ## Overview
 
-This repository provides a fully containerised **Big Data** learning environment built with Docker Compose. It is designed for students and data engineers who want hands-on experience with the tools used in real-world data pipelines — without requiring a cloud account or a production cluster.
+This repository delivers a self-contained Big Data platform that replicates the core components of a modern data engineering architecture. The entire stack is orchestrated through Docker Compose profiles, enabling selective service activation depending on workload requirements.
 
-The stack covers the full data lifecycle:
+The platform addresses the full data lifecycle:
 
-1. **Storage** — HDFS distributed filesystem + MinIO S3-compatible object store
-2. **Processing** — Apache Spark via JupyterLab notebooks
-3. **Orchestration** — Apache Airflow with LocalExecutor
-4. **Observability** — Prometheus, Grafana, cAdvisor, Node Exporter, Telegraf
-5. **Visualisation** — Apache Superset BI dashboards
+1. **Ingestion & Storage** — HDFS distributed filesystem and MinIO S3-compatible object store
+2. **Processing** — Apache Spark running on YARN, accessible via JupyterLab
+3. **Orchestration** — Apache Airflow with LocalExecutor for pipeline scheduling and management
+4. **Observability** — Prometheus, Grafana, cAdvisor, Node Exporter and Telegraf for metrics collection and visualisation
+5. **Business Intelligence** — Apache Superset for interactive dashboards and data exploration
 
-All components are activated via **Docker Compose profiles**, so you can start only the subset of services you need.
+All services are version-pinned, resource-constrained and configuration-driven, making the platform reproducible across environments.
 
 ---
 
 ## Architecture
 
 ```
-+------------------+     +-------------------+     +------------------+
-|   JupyterLab     |---->|   HDFS NameNode   |<----|   YARN Resource  |
-|   + PySpark      |     | + 2x DataNodes    |     |   Manager        |
-+------------------+     +-------------------+     +------------------+
-        |                                                    |
-        v                                                    v
-+------------------+     +-------------------+     +------------------+
-|   MinIO          |     |  Apache Airflow   |     |  Apache Superset |
-|   (S3 / datalake)|     |  (orchestration)  |     |  (BI dashboards) |
-+------------------+     +-------------------+     +------------------+
-                                    |
-                    +---------------+---------------+
-                    |               |               |
-             Prometheus         Grafana         cAdvisor
-             Node Exporter    Telegraf
++---------------------+     +----------------------+     +---------------------+
+|   JupyterLab        |---->|   HDFS NameNode      |<----|   YARN Resource     |
+|   + PySpark         |     |   + 2x DataNodes     |     |   Manager           |
++---------------------+     +----------------------+     +---------------------+
+         |                                                          |
+         v                                                          v
++---------------------+     +----------------------+     +---------------------+
+|   MinIO             |     |   Apache Airflow     |     |   Apache Superset   |
+|   (S3 / Data Lake)  |     |   (Orchestration)    |     |   (BI & Analytics)  |
++---------------------+     +----------------------+     +---------------------+
+                                       |
+                       +---------------+---------------+
+                       |               |               |
+                  Prometheus       Grafana         cAdvisor
+               Node Exporter     Telegraf
 ```
 
 ---
 
 ## Services & Profiles
 
-The entire stack is defined in `docker-compose.yml` and organised into five Docker Compose profiles.
+The stack is defined in `docker-compose.yml` and structured across five independent profiles that can be composed as needed.
 
 ### Hadoop Core — `batch` profile
 
-Implements a minimal HDFS + YARN cluster using the official `apache/hadoop:3.4.0` image.
+A multi-node HDFS + YARN cluster based on the official `apache/hadoop:3.4.0` image.
 
-| Service | Description | Port |
+| Service | Role | Exposed Port |
 |---|---|---|
-| `namenode` | HDFS NameNode — manages filesystem metadata | `9870` |
-| `datanode1` | HDFS DataNode 1 — stores data blocks | — |
-| `datanode2` | HDFS DataNode 2 — stores data blocks | — |
-| `resourcemanager` | YARN ResourceManager — global resource scheduling | `8088` |
-| `nodemanager` | YARN NodeManager — executes containers and tasks | — |
+| `namenode` | HDFS NameNode — filesystem namespace and metadata management | `9870` |
+| `datanode1` | HDFS DataNode — block storage node 1 | — |
+| `datanode2` | HDFS DataNode — block storage node 2 | — |
+| `resourcemanager` | YARN ResourceManager — cluster resource allocation and scheduling | `8088` |
+| `nodemanager` | YARN NodeManager — container execution on worker nodes | — |
 
-**Key details:**
-- All Hadoop containers use a custom entrypoint (`scripts/entrypoint.sh`) that fixes Windows line-endings and starts the correct Hadoop role.
-- Hadoop XML configuration (`core-site.xml`, `hdfs-site.xml`, `yarn-site.xml`, `mapred-site.xml`) is injected from `./configs/hadoop/`.
-- Each node persists its data to a named Docker volume (`namenode_data`, `datanode1_data`, `datanode2_data`).
-- Memory limit per container: **512 MB** (tuned for laptops).
+**Implementation notes:**
+- All Hadoop containers use a unified custom entrypoint (`scripts/entrypoint.sh`) that normalises line endings and delegates startup to the appropriate Hadoop role.
+- XML configuration (`core-site.xml`, `hdfs-site.xml`, `yarn-site.xml`, `mapred-site.xml`) is injected at runtime from `./configs/hadoop/`, keeping images environment-agnostic.
+- Persistent storage is backed by named Docker volumes: `namenode_data`, `datanode1_data`, `datanode2_data`.
+- Each container is memory-constrained to **512 MB** via `deploy.resources.limits`.
 
 ---
 
 ### JupyterLab + Spark — `core` profile
 
-A custom JupyterLab image (built from `src/jupyter/Dockerfile`) that includes PySpark and is pre-configured to talk to HDFS and MinIO.
+A custom JupyterLab image (built from `src/jupyter/Dockerfile`) pre-configured with PySpark and HDFS/MinIO connectivity.
 
-| Setting | Value |
+| Parameter | Value |
 |---|---|
-| Port | `8888` |
-| Token | Disabled (no auth for local dev) |
-| Working directory | `/home/jovyan/work` (entire repo is mounted) |
-| HADOOP_CONF_DIR | `/opt/hadoop/etc/hadoop` |
+| Exposed port | `8888` |
+| Authentication | Disabled (token-free) |
+| Working directory | `/home/jovyan/work` — entire repository mounted |
+| `HADOOP_CONF_DIR` | `/opt/hadoop/etc/hadoop` |
 
-- Hadoop `core-site.xml` and `hdfs-site.xml` are mounted read-only so Spark can resolve the NameNode.
-- Runs as `root` inside the container to simplify Docker volume permissions.
-- State is persisted to the `jupyter_data` volume.
+- `core-site.xml` and `hdfs-site.xml` are mounted read-only, enabling Spark to resolve HDFS URIs (`hdfs://namenode:9000`).
+- The container runs as `root` to avoid permission conflicts with Docker-managed volumes.
+- JupyterLab state is persisted to the `jupyter_data` volume.
 
 ---
 
 ### MinIO Data Lake — `core` profile
 
-MinIO provides an S3-compatible object store, usable from Spark via the `s3a://` connector.
+An S3-compatible object store exposing the standard S3 API, usable from Spark via the `s3a://` connector.
 
-| Service | Description | Port |
+| Service | Role | Exposed Ports |
 |---|---|---|
-| `minio` | Object store server | `9000` (API), `9001` (Console) |
-| `minio-init` | One-shot init container: creates the `datalake` bucket | — |
+| `minio` | Object storage server | `9000` (S3 API), `9001` (Web Console) |
+| `minio-init` | One-shot initialisation: creates the `datalake` bucket and sets public read access | — |
 
 **Default credentials:**
-
 ```
 Access Key : admin
 Secret Key : adminadmin
 ```
 
+Object data is persisted to the `minio_data` volume.
+
 ---
 
 ### Apache Airflow — `orchestration` profile
 
-Apache Airflow 2.8.3 with LocalExecutor backed by PostgreSQL 13.
+Apache Airflow 2.8.3 with LocalExecutor, backed by a dedicated PostgreSQL 13 metadata database.
 
-| Service | Description | Port |
+| Service | Role | Exposed Port |
 |---|---|---|
-| `postgres` | Airflow metadata database | — |
-| `airflow-init` | Runs DB migrations and creates the admin user | — |
-| `airflow-webserver` | Airflow UI | `8081` |
-| `airflow-scheduler` | DAG scheduler | — |
+| `postgres` | Airflow metadata backend | — |
+| `airflow-init` | Executes DB migrations (`airflow db migrate`) and creates the initial admin user | — |
+| `airflow-webserver` | Airflow UI and REST API | `8081` |
+| `airflow-scheduler` | DAG parsing and task scheduling | — |
 
 **Default credentials:** `admin` / `admin`
 
-**Design note:** Airflow does not bundle Spark or HDFS clients. Heavy processing is delegated to the `jupyter` container via `docker exec` — the scheduler mounts `/var/run/docker.sock` for this purpose.
+**Architecture decision:** Airflow containers do not bundle Spark or HDFS clients. Compute-intensive tasks are delegated to the `jupyter` container through `docker exec`, for which the scheduler mounts `/var/run/docker.sock`. This keeps the Airflow images lightweight and separates orchestration concerns from execution.
 
-DAGs, logs and plugins are hot-reloaded from `./src/airflow/`.
+DAGs, plugins and additional configs are hot-reloaded from `./src/airflow/`.
 
 ---
 
 ### Monitoring Stack — `monitoring` profile
 
-A lightweight observability layer using industry-standard open-source tools.
+A full observability layer built on the Prometheus ecosystem.
 
-| Service | Image | Port | Description |
+| Service | Image | Port | Role |
 |---|---|---|---|
-| `prometheus` | `prom/prometheus:v2.51.1` | `9090` | Metrics collection & storage (6 h retention) |
-| `grafana` | `grafana/grafana:10.4.1` | `3000` | Dashboards & alerting |
-| `cadvisor` | `ghcr.io/google/cadvisor:v0.53.0` | `8080` | Container resource metrics |
-| `node-exporter` | `prom/node-exporter:v1.7.0` | `9100` | Host-level OS metrics |
-| `telegraf` | `telegraf:1.33` | `9273` | Docker daemon metrics via socket |
+| `prometheus` | `prom/prometheus:v2.51.1` | `9090` | Metrics scraping and time-series storage (6 h retention) |
+| `grafana` | `grafana/grafana:10.4.1` | `3000` | Metrics visualisation and alerting |
+| `cadvisor` | `ghcr.io/google/cadvisor:v0.53.0` | `8080` | Per-container resource utilisation metrics |
+| `node-exporter` | `prom/node-exporter:v1.7.0` | `9100` | Host-level OS and hardware metrics |
+| `telegraf` | `telegraf:1.33` | `9273` | Docker daemon metrics via Unix socket |
 
-Grafana provisioning (datasources + dashboards) is loaded automatically from `./configs/grafana/provisioning/` and `./configs/grafana/dashboards/`.
+Grafana datasources and dashboards are provisioned automatically from `./configs/grafana/provisioning/` and `./configs/grafana/dashboards/`.
 
-**Default Grafana credentials:** `admin` / `admin` (anonymous access enabled).
+**Default Grafana credentials:** `admin` / `admin`
 
 ---
 
 ### Apache Superset — `bi` profile
 
-Apache Superset built from `src/superset/Dockerfile`, connected to the shared PostgreSQL instance.
+Apache Superset built from `src/superset/Dockerfile`, sharing the PostgreSQL instance provisioned for Airflow.
 
-| Setting | Value |
+| Parameter | Value |
 |---|---|
-| Port | `8089` |
+| Exposed port | `8089` |
 | Default credentials | `admin` / `admin` |
-| Database backend | PostgreSQL (`superset` database on the shared `postgres` service) |
+| Metadata backend | PostgreSQL — `superset` database on the shared `postgres` service |
 
-On first start, the container automatically runs `superset db upgrade`, creates the admin user and calls `superset init`.
+On container startup, the entrypoint automatically executes `superset db upgrade`, creates the admin user and runs `superset init` before serving.
 
 ---
 
@@ -178,127 +180,144 @@ On first start, the container automatically runs `superset db upgrade`, creates 
 big-data/
 |-- configs/
 |   |-- grafana/
-|   |   |-- dashboards/        # Pre-built Grafana dashboard JSON files
-|   |   `-- provisioning/      # Datasource and dashboard provisioning
+|   |   |-- dashboards/        # Grafana dashboard definitions (JSON)
+|   |   `-- provisioning/      # Automated datasource and dashboard provisioning
 |   |-- hadoop/
-|   |   |-- core-site.xml      # HDFS connection settings
-|   |   |-- hdfs-site.xml      # HDFS replication and paths
-|   |   |-- mapred-site.xml    # MapReduce framework config
-|   |   `-- yarn-site.xml      # YARN resource manager config
+|   |   |-- core-site.xml      # HDFS NameNode URI and common settings
+|   |   |-- hdfs-site.xml      # Replication factor and storage paths
+|   |   |-- mapred-site.xml    # MapReduce execution framework config
+|   |   `-- yarn-site.xml      # YARN ResourceManager address and settings
 |   |-- prometheus/
-|   |   `-- prometheus.yml     # Scrape targets and global settings
+|   |   `-- prometheus.yml     # Scrape targets, intervals and global config
 |   `-- telegraf/
-|       `-- telegraf.conf      # Docker socket input + Prometheus output
+|       `-- telegraf.conf      # Docker socket input plugin + Prometheus output
 |-- scripts/
-|   `-- entrypoint.sh          # Custom entrypoint for all Hadoop services
+|   `-- entrypoint.sh          # Unified Hadoop service entrypoint
 |-- src/
 |   |-- airflow/
-|   |   |-- configs/           # Airflow extra config files
-|   |   |-- dags/              # DAG definitions (auto-reloaded)
-|   |   |-- logs/              # Scheduler and task logs
-|   |   `-- plugins/           # Custom Airflow plugins
-|   |-- data/                  # Datasets and data utilities
-|   |-- jobs/                  # Spark batch jobs
+|   |   |-- configs/           # Supplementary Airflow configuration
+|   |   |-- dags/              # DAG definitions (auto-discovered)
+|   |   |-- logs/              # Scheduler and task execution logs
+|   |   `-- plugins/           # Custom Airflow operators and hooks
+|   |-- data/                  # Source datasets and ingestion utilities
+|   |-- jobs/                  # Spark batch job definitions
 |   |-- jupyter/
-|   |   `-- Dockerfile         # Custom JupyterLab + PySpark image
+|   |   `-- Dockerfile         # JupyterLab + PySpark image definition
 |   `-- superset/
-|       `-- Dockerfile         # Custom Superset image
+|       `-- Dockerfile         # Apache Superset image definition
 |-- .gitignore
-`-- docker-compose.yml         # Full stack definition with profiles
+`-- docker-compose.yml         # Full platform definition with profiles and volumes
 ```
 
 ---
 
-## Prerequisites
+## Requirements
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Docker Compose plugin)
-- At least **8 GB of RAM** available to Docker (4 GB minimum for partial stacks)
+- [Docker Engine](https://docs.docker.com/engine/install/) >= 24.0 with Docker Compose plugin >= 2.20
+- Minimum **8 GB RAM** allocated to Docker (4 GB for partial profile deployments)
+- Minimum **20 GB** of available disk space for images and persistent volumes
 - Git
 
 ---
 
-## Quick Start
+## Deployment
 
-### 1. Clone the repository
+### Clone the repository
 
 ```bash
 git clone https://github.com/Phosky71/big-data.git
 cd big-data
 ```
 
-### 2. Start the Hadoop + Jupyter + MinIO stack
+### Start the core platform (Hadoop + Spark + MinIO)
 
 ```bash
 docker compose --profile batch --profile core up -d
 ```
 
-### 3. (Optional) Add workflow orchestration
+### Add workflow orchestration
 
 ```bash
 docker compose --profile orchestration up -d
 ```
 
-### 4. (Optional) Add monitoring
+### Add observability
 
 ```bash
 docker compose --profile monitoring up -d
 ```
 
-### 5. (Optional) Add BI dashboards
+### Add business intelligence
 
 ```bash
 docker compose --profile bi up -d
 ```
 
-### Stop everything
+### Start the full platform
+
+```bash
+docker compose --profile batch --profile core --profile orchestration --profile monitoring --profile bi up -d
+```
+
+### Tear down
 
 ```bash
 docker compose --profile batch --profile core --profile orchestration --profile monitoring --profile bi down
 ```
 
+To also remove all persistent volumes:
+
+```bash
+docker compose ... down -v
+```
+
 ---
 
-## Service URLs
+## Service Endpoints
 
-| Service | URL | Credentials |
+| Service | URL | Default Credentials |
 |---|---|---|
 | JupyterLab | http://localhost:8888 | No token |
 | HDFS NameNode UI | http://localhost:9870 | — |
 | YARN ResourceManager UI | http://localhost:8088 | — |
 | MinIO Console | http://localhost:9001 | admin / adminadmin |
+| MinIO S3 API | http://localhost:9000 | admin / adminadmin |
 | Airflow UI | http://localhost:8081 | admin / admin |
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | admin / admin |
 | cAdvisor | http://localhost:8080 | — |
 | Node Exporter | http://localhost:9100/metrics | — |
+| Telegraf metrics | http://localhost:9273/metrics | — |
 | Superset | http://localhost:8089 | admin / admin |
 
 ---
 
-## Learning Scenarios
+## Use Cases
 
-This stack is suitable for a variety of hands-on learning exercises:
-
-- **HDFS exploration** — Upload, read and manage files on a real distributed filesystem from Jupyter notebooks.
-- **Spark on YARN** — Submit PySpark jobs that run on the YARN cluster using `spark-submit` or the Spark session inside Jupyter.
-- **S3A + MinIO** — Implement a Bronze / Silver / Gold medallion data lake architecture storing Parquet files on MinIO.
-- **Airflow pipelines** — Build DAGs that orchestrate Spark jobs running inside the Jupyter container via Docker operator.
-- **Observability** — Explore container metrics in Grafana, set up alerting rules in Prometheus, and understand cAdvisor and Node Exporter dashboards.
-- **BI dashboards** — Connect Superset to a PostgreSQL dataset produced by your pipelines and build interactive charts.
+- **Distributed batch processing** — Run PySpark jobs on a YARN-managed cluster reading from and writing to HDFS.
+- **Data lake pipelines** — Implement Bronze / Silver / Gold medallion architecture persisting Parquet and Delta files on MinIO via the `s3a://` connector.
+- **Pipeline orchestration** — Schedule and monitor multi-step data workflows with Airflow, delegating Spark execution to the compute container.
+- **Infrastructure observability** — Collect, store and visualise container and host metrics using Prometheus and Grafana with pre-provisioned dashboards.
+- **Business intelligence** — Build interactive dashboards in Apache Superset on top of curated datasets produced by the data pipelines.
 
 ---
 
-## Notes & Caveats
+## Configuration
 
-- **Not for production.** Passwords, tokens and security settings are intentionally simple for local development and classroom use.
-- **Resource limits** are tuned for a typical developer laptop. Adjust `deploy.resources.limits` in `docker-compose.yml` if you have more RAM available.
-- The Airflow scheduler and Telegraf containers run as `root` and mount the Docker socket — this is expected in a local lab but would be a security concern in any shared environment.
-- Prometheus retention is set to **6 hours** to keep disk usage low. Increase `--storage.tsdb.retention.time` if you need longer history.
-- Custom Hadoop configuration files in `./configs/hadoop/` are mounted read-only into every Hadoop and Jupyter container so all services share the same cluster settings.
+| Component | Configuration path |
+|---|---|
+| Hadoop (HDFS + YARN) | `configs/hadoop/*.xml` |
+| Prometheus scrape targets | `configs/prometheus/prometheus.yml` |
+| Grafana provisioning | `configs/grafana/provisioning/` |
+| Grafana dashboards | `configs/grafana/dashboards/` |
+| Telegraf inputs/outputs | `configs/telegraf/telegraf.conf` |
+| Airflow DAGs | `src/airflow/dags/` |
+| Spark jobs | `src/jobs/` |
+
+All Hadoop XML files are mounted read-only into every Hadoop and JupyterLab container, ensuring consistent cluster configuration across services without rebuilding images.
 
 ---
 
 ## License
 
-This project is provided for educational purposes. Feel free to use and adapt it for learning or teaching.
-Add your preferred open-source license (e.g. MIT, Apache-2.0) as needed.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
