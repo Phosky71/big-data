@@ -1,4 +1,4 @@
-# Big Data Platform
+# Hadoop Spark Airflow Stack
 
 > Production-grade, fully containerised Big Data platform built with Docker Compose. Covers the complete data engineering pipeline: distributed storage, large-scale processing, workflow orchestration, S3-compatible data lake, full-stack observability, and business intelligence.
 
