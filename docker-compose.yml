@@ -1,0 +1,440 @@
+services:
+  # ---------------------------------------------------------------------------
+  # NAMENODE: El "cerebro" de HDFS.
+  # Gestiona los metadatos del sistema de archivos (qué bloques forman qué archivos).
+  # ---------------------------------------------------------------------------
+  namenode:
+    image: apache/hadoop:3.4.0 # Usamos la versión oficial de Apache Hadoop
+    container_name: namenode
+    profiles: [ "batch" ]
+    hostname: namenode
+    user: root # Necesario para permisos de escritura en volúmenes
+    # Comando de inicio personalizado:
+    # 1. Copia el entrypoint original a /tmp
+    # 2. 'sed': Corrige posibles errores de formato de línea de Windows (\r\n) que rompen el script
+    # 3. Ejecuta el entrypoint original iniciándolo como 'namenode'
+    command: [ "/bin/bash", "-c", "cp /opt/hadoop/scripts/entrypoint.sh /tmp/entrypoint.sh && sed -i 's/\\r$//' /tmp/entrypoint.sh && bash /tmp/entrypoint.sh namenode" ]
+    ports:
+      - "9870:9870" # Puerto Web UI del NameNode (http://localhost:9870)
+    env_file: ./.env # Carga variables de entorno comunes (configuración de Hadoop)
+    volumes:
+      - namenode_data:/tmp/hadoop-hadoop/dfs/name # PERSISTENCIA: Los metadatos de HDFS se guardan aquí
+      # Inyección de archivos de configuración (.xml) desde tu carpeta local ./config al contenedor
+      - ./configs/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./configs/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./configs/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml
+      - ./configs/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml
+      - ./scripts:/opt/hadoop/scripts # Scripts auxiliares
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # DATANODE 1: El primer "trabajador" de almacenamiento.
+  # Guarda los bloques de datos reales.
+  # ---------------------------------------------------------------------------
+  datanode1:
+    image: apache/hadoop:3.4.0
+    container_name: datanode1
+    profiles: [ "batch" ]
+    user: root
+    command: [ "/bin/bash", "-c", "cp /opt/hadoop/scripts/entrypoint.sh /tmp/entrypoint.sh && sed -i 's/\\r$//' /tmp/entrypoint.sh && bash /tmp/entrypoint.sh datanode" ]
+    depends_on:
+      - namenode # Espera a que el NameNode arranque primero
+    env_file: ./.env
+    volumes:
+      - datanode1_data:/tmp/hadoop-hadoop/dfs/data # PERSISTENCIA: Datos del nodo 1
+      - ./configs/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./configs/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./configs/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml
+      - ./configs/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml
+      - ./scripts:/opt/hadoop/scripts
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # DATANODE 2: Segundo "trabajador" de almacenamiento.
+  # Permite tener replicación de datos (redundancia).
+  # ---------------------------------------------------------------------------
+  datanode2:
+    image: apache/hadoop:3.4.0
+    container_name: datanode2
+    profiles: [ "batch" ]
+    user: root
+    command: [ "/bin/bash", "-c", "cp /opt/hadoop/scripts/entrypoint.sh /tmp/entrypoint.sh && sed -i 's/\\r$//' /tmp/entrypoint.sh && bash /tmp/entrypoint.sh datanode" ]
+    depends_on:
+      - namenode
+    env_file: ./.env
+    volumes:
+      - datanode2_data:/tmp/hadoop-hadoop/dfs/data # PERSISTENCIA: Datos del nodo 2
+      - ./configs/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./configs/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./configs/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml
+      - ./configs/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml
+      - ./scripts:/opt/hadoop/scripts
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # RESOURCEMANAGER (YARN): El "jefe" de los recursos.
+  # Asigna CPU y RAM a las tareas (Jobs) que se ejecutan en el cluster.
+  # ---------------------------------------------------------------------------
+  resourcemanager:
+    image: apache/hadoop:3.4.0
+    container_name: resourcemanager
+    profiles: [ "batch" ]
+    hostname: resourcemanager
+    user: root
+    command: [ "/bin/bash", "-c", "cp /opt/hadoop/scripts/entrypoint.sh /tmp/entrypoint.sh && sed -i 's/\\r$//' /tmp/entrypoint.sh && bash /tmp/entrypoint.sh resourcemanager" ]
+    ports:
+      - "8088:8088" # Puerto Web UI de YARN (http://localhost:8088)
+    env_file: ./.env
+    volumes:
+      - ./configs/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./configs/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./configs/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml
+      - ./configs/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml
+      - ./scripts:/opt/hadoop/scripts
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # NODEMANAGER (YARN): El "trabajador" de cómputo.
+  # Ejecuta las tareas reales (contenedores de YARN) que le manda el ResourceManager.
+  # ---------------------------------------------------------------------------
+  nodemanager:
+    image: apache/hadoop:3.4.0
+    container_name: nodemanager
+    profiles: [ "batch" ]
+    user: root
+    command: [ "/bin/bash", "-c", "cp /opt/hadoop/scripts/entrypoint.sh /tmp/entrypoint.sh && sed -i 's/\\r$//' /tmp/entrypoint.sh && bash /tmp/entrypoint.sh nodemanager" ]
+    depends_on:
+      - resourcemanager
+      - namenode
+    env_file: ./.env
+    volumes:
+      - ./configs/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./configs/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./configs/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml
+      - ./configs/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml
+      - ./scripts:/opt/hadoop/scripts
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # JUPYTERLAB: Tu entorno de trabajo (Cliente).
+  # Contiene Python, clientes de HDFS/YARN y es donde escribes código.
+  # NO es parte de la arquitectura base de Hadoop, pero lo usamos para interactuar.
+  # ---------------------------------------------------------------------------
+  jupyter:
+    build:
+      context: .
+      dockerfile: src/jupyter/Dockerfile
+    container_name: jupyter-aula
+    profiles: [ "core" ]
+    user: root # Necesario para evitar problemas de permisos en Docker Desktop/Windows
+    environment:
+      - GRANT_SUDO=yes
+      - CHOWN_HOME=yes
+      - CHOWN_EXTRA=/home/jovyan/.local/share/jupyter
+      # Apuntar a configuración de Hadoop para que Spark sepa donde está el NameNode
+      - HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+    command: start-notebook.sh --IdentityProvider.token=''
+    ports:
+      - "8888:8888" # Puerto de acceso a Jupyter (http://localhost:8888)
+    env_file: ./.env
+    volumes:
+      - ./:/home/jovyan/work # Mapea carpeta actual a 'work' en Jupyter
+      # Montamos configuración de Hadoop en solo lectura para que Spark la lea
+      - ./configs/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./configs/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      # NO montamos binarios de hadoop porque son incompatibles
+      - jupyter_data:/home/jovyan/.local/share/jupyter
+    deploy:
+      resources:
+        limits:
+          memory: 2G # Aumentamos memoria para Jupyter+Spark
+
+  # ===========================================================================
+  # 📊 UT4: MONITORIZACIÓN Y OBSERVABILIDAD (Prometheus, Grafana, Exporters)
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.51.1
+    container_name: prometheus
+    profiles: [ "monitoring" ]
+    user: root
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=6h' # Retención corta para ahorrar RAM/Disco
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: grafana
+    profiles: [ "monitoring" ]
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true # Facilita el acceso educativo local
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./configs/grafana/provisioning:/etc/grafana/provisioning
+      - ./configs/grafana/dashboards:/etc/grafana/dashboards
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.53.0
+    container_name: cadvisor
+    profiles: [ "monitoring" ]
+    ports:
+      - "8080:8080"
+    command:
+      - '-disable_metrics=disk,diskIO'
+    volumes:
+      - /:/rootfs:ro
+      - docker_lib:/rootfs/var/lib/docker:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    privileged: true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: node-exporter
+    profiles: [ "monitoring" ]
+    ports:
+      - "9100:9100"
+
+  telegraf:
+    image: telegraf:1.33
+    container_name: telegraf
+    profiles: [ "monitoring" ]
+    entrypoint: /bin/sh -c "chmod 666 /var/run/docker.sock && telegraf --config /etc/telegraf/telegraf.conf"
+    volumes:
+      - ./configs/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    ports:
+      - "9273:9273"
+    user: "0"
+    privileged: true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+    # ===========================================================================
+  # ⏱️ UT4: ORQUESTACIÓN CON AIRFLOW (Modo "Light" con LocalExecutor)
+  # ===========================================================================
+  postgres:
+    image: postgres:13
+    container_name: airflow-postgres
+    profiles: [ "core" ]
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  airflow-init:
+    image: apache/airflow:2.8.3
+    container_name: airflow-init
+    user: "50000:0"
+    profiles: [ "orchestration" ]
+    depends_on:
+      - postgres
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    command: version
+    volumes:
+      - ./src/airflow/dags:/opt/airflow/dags
+      - ./src/airflow/logs:/opt/airflow/logs
+      - ./src/airflow/plugins:/opt/airflow/plugins
+      - ./src/airflow/configs:/opt/airflow/configs
+    entrypoint: >
+      bash -c "airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true"
+
+  airflow-webserver:
+    image: apache/airflow:2.8.3
+    container_name: airflow-webserver
+    user: "50000:0"
+    profiles: [ "orchestration" ]
+    depends_on:
+      postgres:
+        condition: service_started
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./src/airflow/dags:/opt/airflow/dags
+      - ./src/airflow/logs:/opt/airflow/logs
+      - ./src/airflow/plugins:/opt/airflow/plugins
+    command: webserver
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.3
+    container_name: airflow-scheduler
+    user: "0:0"
+    profiles: [ "orchestration" ]
+    depends_on:
+      postgres:
+        condition: service_started
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-webserver:
+        condition: service_started
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./src/airflow/dags:/opt/airflow/dags
+      - ./src/airflow/logs:/opt/airflow/logs
+      - ./src/airflow/plugins:/opt/airflow/plugins
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: scheduler
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+            
+    # Justificación técnica del montaje de /var/run/docker.sock en airflow-scheduler
+    #
+    # El pipeline Medallion requiere ejecutar jobs Spark con acceso a HDFS y MinIO (S3A),
+    # capacidades que solo existen en el contenedor jupyter-aula (imagen jupyter/pyspark-notebook
+    # con Hadoop 3.4.0 client instalado).
+    #
+    # Airflow (imagen apache/airflow:2.8.3) NO incluye Spark ni cliente Hadoop, por lo que
+    # las transformaciones Bronze→Silver, Silver→Gold y la publicación final a PostgreSQL/Superset
+    # deben ejecutarse FUERA del contenedor de Airflow.
+    #
+    # La solución implementada permite que airflow-scheduler orqueste el flujo completo mediante
+    # BashOperator ejecutando comandos "docker exec jupyter-aula spark-submit ...", delegando
+    # la ejecución real al contenedor preparado para Spark.
+    #
+    # Para que esto funcione, airflow-scheduler necesita:
+    # 1. Acceso al daemon Docker del host: montaje de /var/run/docker.sock
+    # 2. Usuario root (user: "0:0") para permisos sobre el socket
+    #
+    # Este patrón es estándar en entornos donde el orquestador (Airflow) lanza workloads
+    # en contenedores especializados separados, manteniendo la separación de responsabilidades:
+    # - Airflow: orquestación, logging, retry logic, scheduling
+    # - jupyter-aula: ejecución de jobs Spark con acceso al ecosistema Hadoop/S3            
+
+  # ===========================================================================
+  # 🪣 DATA LAKE MODERNO: MinIO (Compatible con Amazon S3)
+  # ===========================================================================
+  minio:
+    image: minio/minio:RELEASE.2024-03-30T09-41-56Z
+    container_name: minio
+    profiles: [ "core" ]
+    ports:
+      - "9000:9000" # API S3
+      - "9001:9001" # Web UI Console
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=adminadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  minio-init:
+    image: minio/mc
+    container_name: minio-init
+    profiles: [ "core" ]
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c " sleep 5; mc alias set myminio http://minio:9000 admin adminadmin; mc mb myminio/datalake || true; mc anonymous set public myminio/datalake || true; exit 0; "
+
+  # ===========================================================================
+  # 📈 UT5: BUSINESS INTELLIGENCE (Apache Superset)
+  # ===========================================================================
+  superset:
+    build:
+      context: .
+      dockerfile: src/superset/Dockerfile
+    container_name: superset
+    profiles: [ "bi" ]
+    depends_on:
+      - postgres
+    ports:
+      - "8089:8088"
+    environment:
+      - SUPERSET_SECRET_KEY=mi_secreto_educativo_super_seguro
+    command: >
+      bash -c "python -c \"import sqlalchemy as sa; e=sa.create_engine('postgresql+psycopg2://airflow:airflow@postgres/airflow', isolation_level='AUTOCOMMIT'); e.execute('CREATE DATABASE superset') if not e.execute('SELECT 1 FROM pg_database WHERE datname=\\'superset\\'').scalar() else None\" && echo \"SQLALCHEMY_DATABASE_URI = 'postgresql+psycopg2://airflow:airflow@postgres/superset'\" > /app/pythonpath/superset_config.py && echo \"SUPERSET_SECRET_KEY = 'mi_secreto_educativo_super_seguro'\" >> /app/pythonpath/superset_config.py && superset db upgrade && superset fab create-admin --username admin --firstname Admin --lastname User --email admin@localhost --password admin || true && superset init && /usr/bin/run-server.sh"
+    deploy:
+      resources:
+        limits:
+          memory: 800M
+
+# ---------------------------------------------------------------------------
+# VOLÚMENES: Espacios de almacenamiento gestionados por Docker.
+# Sobreviven aunque borres los contenedores (docker down).
+# ---------------------------------------------------------------------------
+volumes:
+  namenode_data: # Metadatos del NameNode
+  datanode1_data: # Datos del DataNode 1
+  datanode2_data: # Datos del DataNode 2
+  jupyter_data:
+  prometheus_data: # UT4: Retención corta de métricas
+  grafana_data: # UT4: Configuración y estado de Grafana
+  postgres_data: # UT4: Base de datos de metadatos de Airflow
+  minio_data: # Persistencia del Data Lake S3
+  docker_lib:
+    driver: local
+    driver_opts:
+      type: none
+      device: /var/lib/docker
+      o: bind

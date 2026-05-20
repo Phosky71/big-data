@@ -1,0 +1,13 @@
+{
+    "silver_path": "s3a://datalake/silver/iot/sensor_aula_01/",
+    "total_records": 462,
+    "null_event_id": 0,
+    "null_device_id": 0,
+    "null_timestamp": 0,
+    "bad_temperature": 0,
+    "bad_humidity": 0,
+    "bad_co2": 0,
+    "bad_battery": 0,
+    "duplicate_event_ids": 0,
+    "silver_validation_passed": true
+}

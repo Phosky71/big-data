@@ -1,0 +1,10 @@
+README.md
+/.ipynb_checkpoints
+/educacion
+/docs
+/data
+.env
+/src/airflow/logs
+/src/airflow/dags/__pycache__
+/src/airflow/dags/data
+/src/airflow/dags/jobs/__pycache__
